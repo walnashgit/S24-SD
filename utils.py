@@ -130,7 +130,7 @@ def generate_with_embs(text_embeddings, text_input):
     return latents_to_pil(latents)[0]
 
 
-def generate_with_custom_loss(text_embeddings, text_input):
+def generate_with_custom_loss(text_embeddings, text_input,  loss_fn):
     blue_loss_scale = 200
 
     height = 512  # default height of Stable Diffusion
@@ -187,7 +187,7 @@ def generate_with_custom_loss(text_embeddings, text_input):
             denoised_images = vae.decode((1 / 0.18215) * latents_x0).sample / 2 + 0.5  # range (0, 1)
 
             # Calculate loss
-            loss = custom_loss(denoised_images) * blue_loss_scale
+            loss = loss_fn(denoised_images) * blue_loss_scale
 
             # Occasionally print it out
             if i % 10 == 0:
