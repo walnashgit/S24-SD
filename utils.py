@@ -130,6 +130,87 @@ def generate_with_embs(text_embeddings, text_input):
     return latents_to_pil(latents)[0]
 
 
+def generate_with_custom_loss(text_embeddings, text_input):
+    blue_loss_scale = 200
+
+    height = 512  # default height of Stable Diffusion
+    width = 512  # default width of Stable Diffusion
+    num_inference_steps = 50  # Number of denoising steps
+    guidance_scale = 8  # Scale for classifier-free guidance
+    generator = torch.manual_seed(32)  # Seed generator to create the inital latent noise
+    batch_size = 1
+
+    max_length = text_input.input_ids.shape[-1]
+    uncond_input = tokenizer(
+        [""] * batch_size, padding="max_length", max_length=max_length, return_tensors="pt"
+    )
+    with torch.no_grad():
+        uncond_embeddings = text_encoder(uncond_input.input_ids.to(torch_device))[0]
+    text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+
+    # Prep Scheduler
+    set_timesteps(scheduler, num_inference_steps)
+
+    # Prep latents
+    latents = torch.randn(
+        (batch_size, unet.in_channels, height // 8, width // 8),
+        generator=generator,
+    )
+    latents = latents.to(torch_device)
+    latents = latents * scheduler.init_noise_sigma
+
+    # Loop
+    for i, t in tqdm(enumerate(scheduler.timesteps), total=len(scheduler.timesteps)):
+        # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
+        latent_model_input = torch.cat([latents] * 2)
+        sigma = scheduler.sigmas[i]
+        latent_model_input = scheduler.scale_model_input(latent_model_input, t)
+
+        # predict the noise residual
+        with torch.no_grad():
+            noise_pred = unet(latent_model_input, t, encoder_hidden_states=text_embeddings)["sample"]
+
+        # perform guidance
+        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+        #### ADDITIONAL GUIDANCE ###
+        if i % 5 == 0:
+            # Requires grad on the latents
+            latents = latents.detach().requires_grad_()
+
+            # Get the predicted x0:
+            latents_x0 = latents - sigma * noise_pred
+            # latents_x0 = scheduler.step(noise_pred, t, latents).pred_original_sample
+
+            # Decode to image space
+            denoised_images = vae.decode((1 / 0.18215) * latents_x0).sample / 2 + 0.5  # range (0, 1)
+
+            # Calculate loss
+            loss = custom_loss(denoised_images) * blue_loss_scale
+
+            # Occasionally print it out
+            if i % 10 == 0:
+                print(i, 'loss:', loss.item())
+
+            # Get gradient
+            cond_grad = torch.autograd.grad(loss, latents)[0]
+
+            # Modify the latents based on this gradient
+            latents = latents.detach() - cond_grad * sigma ** 2
+
+        # compute the previous noisy sample x_t -> x_t-1
+        latents = scheduler.step(noise_pred, t, latents).prev_sample
+
+    return latents_to_pil(latents)[0]
+
+
+def custom_loss(image):
+    loss = torch.sum(torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :])) + \
+              torch.sum(torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:]))
+    return loss
+
+
 def plot_image(image):
     plt.imshow(image)
     plt.axis('off')  # Hide the axis
