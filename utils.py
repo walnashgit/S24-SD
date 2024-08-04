@@ -11,6 +11,8 @@ from matplotlib import pyplot as plt
 torch_device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 if "mps" == torch_device: os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = "1"
 
+
+
 # Load the autoencoder model which will be used to decode the latents into image space.
 vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
 
@@ -82,12 +84,12 @@ def get_output_embeds(input_embeddings):
 
 #Generating an image with these modified embeddings
 
-def generate_with_embs(text_embeddings, text_input):
+def generate_with_embs(text_embeddings, text_input, generator):
     height = 512                        # default height of Stable Diffusion
     width = 512                         # default width of Stable Diffusion
     num_inference_steps = 30            # Number of denoising steps
     guidance_scale = 7.5                # Scale for classifier-free guidance
-    generator = torch.manual_seed(32)   # Seed generator to create the inital latent noise
+    # generator = torch.manual_seed(32)   # Seed generator to create the inital latent noise
     batch_size = 1
 
     max_length = text_input.input_ids.shape[-1]
@@ -130,14 +132,14 @@ def generate_with_embs(text_embeddings, text_input):
     return latents_to_pil(latents)[0]
 
 
-def generate_with_custom_loss(text_embeddings, text_input,  loss_fn):
+def generate_with_custom_loss(text_embeddings, text_input, generator, loss_fn):
     blue_loss_scale = 200
 
     height = 512  # default height of Stable Diffusion
     width = 512  # default width of Stable Diffusion
     num_inference_steps = 50  # Number of denoising steps
     guidance_scale = 8  # Scale for classifier-free guidance
-    generator = torch.manual_seed(32)  # Seed generator to create the inital latent noise
+    # generator = torch.manual_seed(32)  # Seed generator to create the inital latent noise
     batch_size = 1
 
     max_length = text_input.input_ids.shape[-1]
