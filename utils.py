@@ -137,8 +137,8 @@ def generate_with_custom_loss(text_embeddings, text_input, generator, loss_fn):
 
     height = 512  # default height of Stable Diffusion
     width = 512  # default width of Stable Diffusion
-    num_inference_steps = 50  # Number of denoising steps
-    guidance_scale = 8  # Scale for classifier-free guidance
+    num_inference_steps = 30  # Number of denoising steps
+    guidance_scale = 7.5  # Scale for classifier-free guidance
     # generator = torch.manual_seed(32)  # Seed generator to create the inital latent noise
     batch_size = 1
 
@@ -177,7 +177,7 @@ def generate_with_custom_loss(text_embeddings, text_input, generator, loss_fn):
         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
         #### ADDITIONAL GUIDANCE ###
-        if i % 5 == 0:
+        if i % 10 == 0:
             # Requires grad on the latents
             latents = latents.detach().requires_grad_()
 
@@ -207,10 +207,69 @@ def generate_with_custom_loss(text_embeddings, text_input, generator, loss_fn):
     return latents_to_pil(latents)[0]
 
 
-def custom_loss(image):
-    loss = torch.sum(torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :])) + \
-              torch.sum(torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:]))
-    return loss
+# def custom_loss(image):
+#     loss = torch.sum(torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :])) + \
+#               torch.sum(torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:]))
+#     return loss
+
+def blue_loss(images):
+    # How far are the blue channel values to 0.9:
+    error = torch.abs(images[:,2] - 0.9).mean() # [:,2] -> all images in batch, only the blue channel
+    return error
+
+
+def custom_loss_fn(images):
+    # Assuming images are in the range [0, 1]
+    inverted_images = 1.0 - images
+    error = torch.abs(images - inverted_images).mean()
+    return error
+
+
+def get_image_as_per_style_and_prompt(prompt, style, seed, custom_loss=None):
+    # prompt = 'IronMan in the style of puppy'
+
+    generator = torch.manual_seed(seed)
+
+    # Tokenize
+    text_input = tokenizer(prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True,
+                           return_tensors="pt")
+    input_ids = text_input.input_ids.to(torch_device)
+
+    # Access the embedding layer
+    token_emb_layer = text_encoder.text_model.embeddings.token_embedding
+
+    # Get token embeddings
+    token_embeddings = token_emb_layer(input_ids)
+
+    # The new embedding - special style
+    if style:
+        style_embed = torch.load(style)
+        keys = list(style_embed.keys())
+        replacement_token_embedding = style_embed[keys[0]].to(torch_device)
+
+        # The new embedding. In this case just the input embedding of token 2368...mixing CAT
+        # replacement_token_embedding = text_encoder.get_input_embeddings()(torch.tensor(2368, device=torch_device))
+
+        # Insert this into the token embeddings (
+        token_embeddings[0, torch.where(input_ids[0] == 6829)] = replacement_token_embedding.to(torch_device)
+
+    # get pos embed
+    pos_emb_layer = text_encoder.text_model.embeddings.position_embedding
+    position_ids = text_encoder.text_model.embeddings.position_ids[:, :77]
+    position_embeddings = pos_emb_layer(position_ids)
+
+    # Combine with pos embs
+    input_embeddings = token_embeddings + position_embeddings
+
+    #  Feed through to get final output embs
+    modified_output_embeddings = get_output_embeds(input_embeddings)
+
+    if custom_loss is not None:
+        image = generate_with_custom_loss(modified_output_embeddings, text_input, generator, custom_loss)
+    else:
+        image = generate_with_embs(modified_output_embeddings, text_input, generator)
+
+    return image
 
 
 def plot_image(image):
