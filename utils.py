@@ -133,7 +133,7 @@ def generate_with_embs(text_embeddings, text_input, generator):
 
 
 def generate_with_custom_loss(text_embeddings, text_input, generator, loss_fn):
-    blue_loss_scale = 200
+    blue_loss_scale = 60
 
     height = 512  # default height of Stable Diffusion
     width = 512  # default width of Stable Diffusion
